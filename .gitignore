@@ -48,15 +48,6 @@ checkpoints/
 *.pkl
 *.joblib
 
-# Figures and plots
-src/Figs/
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.pdf
-*.svg
-
 # Data files
 *.xlsx
 *.xls
