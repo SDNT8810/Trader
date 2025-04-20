@@ -58,7 +58,6 @@ src/Figs/
 *.svg
 
 # Data files
-*.csv
 *.xlsx
 *.xls
 *.dat
@@ -75,7 +74,6 @@ Thumbs.db
 
 # Project specific
 visualizations/
-*.csv
 *.pkl
 *.h5
 *.model
