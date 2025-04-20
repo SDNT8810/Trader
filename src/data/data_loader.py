@@ -158,4 +158,27 @@ class DataLoader:
         logger.info(f"Training set shape: {X_train.shape}")
         logger.info(f"Testing set shape: {X_test.shape}")
         
-        return X_train, X_test, y_train, y_test 
+        return X_train, X_test, y_train, y_test
+
+def main():
+    """Main function to run the data loading and preprocessing pipeline."""
+    logger.info("Starting data processing pipeline...")
+    
+    # Initialize data loader
+    data_loader = DataLoader('Gchart.csv')
+    
+    # Load data
+    logger.info("Loading data...")
+    data_loader.load_data()
+    
+    # Preprocess data
+    logger.info("Preprocessing data...")
+    processed_data = data_loader.preprocess_data()
+    
+    # Save processed data
+    logger.info("Saving processed data...")
+    processed_data.to_csv('Data.csv', index=False)
+    logger.info("Data processing completed and saved to Data.csv")
+
+if __name__ == "__main__":
+    main() 
