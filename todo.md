@@ -7,7 +7,7 @@ src/
 │   ├── __init__.py
 │   ├── data_preprocessor.py    # Data preprocessing and normalization
 │   ├── check_data.py          # Data quality verification
-│   └── historical_da/Users/davoud/Desktop/codespace/Trader/README.mdta/        # Store historical data
+│   └── historical_data/        # Store historical data
 ├── models/
 │   ├── __init__.py
 │   ├── trading_model.py        # Main trading strategy model
