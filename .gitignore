@@ -22,59 +22,29 @@ wheels/
 
 # Virtual Environment
 venv/
-env/
 ENV/
+env/
 .env
 .venv
+env.bak/
+venv.bak/
 
-# IDE
+# IDE specific files
 .idea/
 .vscode/
 *.swp
 *.swo
 .DS_Store
-
-# Logs
-*.log
-logs/
-training.log
-
-# Checkpoints and model files
-checkpoints/
-*.pth
-*.pt
-*.h5
-*.hdf5
-*.pkl
-*.joblib
-
-# Figures and plots
-src/Figs/
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.pdf
-*.svg
-
-# Data files
-*.csv
-*.xlsx
-*.xls
-*.dat
-*.npy
-*.npz
+*.sublime-workspace
+*.sublime-project
 
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
 
-# System Files
-.DS_Store
-Thumbs.db
-
 # Project specific
 visualizations/
+*.log
 *.csv
 *.pkl
 *.h5
@@ -127,6 +97,7 @@ coverage.xml
 *.pot
 
 # Django stuff:
+*.log
 local_settings.py
 db.sqlite3
 
@@ -155,6 +126,15 @@ celerybeat-schedule
 
 # SageMath parsed files
 *.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # Spyder project settings
 .spyderproject
@@ -186,11 +166,15 @@ cython_debug/
 !.vscode/extensions.json
 
 # macOS
+.DS_Store
 .AppleDouble
 .LSOverride
 ._*
 
 # Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 $RECYCLE.BIN/
 
 # Linux

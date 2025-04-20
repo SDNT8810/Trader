@@ -1,115 +1,110 @@
-import torch
-import torch.nn as nn
+import os
+import sys
+from src.data.data_loader import DataLoader
+from src.visualization.plotter import DataPlotter
 import pandas as pd
-import numpy as np
-from torch.utils.data import Dataset, DataLoader
-
-class TimeSeriesDataset(Dataset):
-    def __init__(self, data, window_size=50, target_size=1):
-        self.data = data
-        self.window_size = window_size
-        self.target_size = target_size
-        
-    def __len__(self):
-        return len(self.data) - self.window_size - self.target_size + 1
-        
-    def __getitem__(self, idx):
-        # Get input sequence (window of data)
-        x = self.data[idx:idx + self.window_size]
-        # Get target sequence (next value)
-        y = self.data[idx + self.window_size:idx + self.window_size + self.target_size]
-        return torch.FloatTensor(x), torch.FloatTensor(y)
-
-class TimeSeriesModel(nn.Module):
-    def __init__(self, input_size, hidden_size=256, num_layers=10, dropout=0.2):
-        super(TimeSeriesModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        
-        # LSTM layers
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
-            bidirectional=True  # Add bidirectional processing
-        )
-        
-        # Attention mechanism
-        self.attention = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),  # *2 for bidirectional
-            nn.Tanh(),
-            nn.Linear(hidden_size, 1)
-        )
-        
-        # Deep output layers
-        self.output_layers = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, hidden_size // 4),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size // 4, 1)
-        )
-        
-    def forward(self, x):
-        # LSTM forward pass
-        lstm_out, _ = self.lstm(x)
-        
-        # Attention mechanism
-        attention_weights = self.attention(lstm_out)
-        attention_weights = torch.softmax(attention_weights, dim=1)
-        context = torch.sum(attention_weights * lstm_out, dim=1)
-        
-        # Deep output processing
-        output = self.output_layers(context)
-        return output
+import matplotlib.pyplot as plt
 
 def main():
-    # Read the CSV file
-    print("Reading NData.csv...")
-    df = pd.read_csv('NData.csv')
+    # Get the path to the data file
+    data_path = "Gchart.csv"  # Update this path if needed
     
-    # Convert to numpy array and normalize
-    data = df.values
-    data = (data - np.mean(data, axis=0)) / np.std(data, axis=0)
+    # Initialize data loader and plotter
+    data_loader = DataLoader(data_path)
+    plotter = DataPlotter()
     
-    # Create dataset
-    window_size = 50
-    num_features = data.shape[1] - 1  # Exclude target column
-    dataset = TimeSeriesDataset(data, window_size=window_size)
-    
-    # Create data loader
-    batch_size = 32
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
-    # Initialize the model
-    model = TimeSeriesModel(
-        input_size=num_features,
-        hidden_size=256,  # Increased hidden size
-        num_layers=10,    # 10 layers
-        dropout=0.2
-    )
-    
-    # Print model summary
-    print("\nModel Architecture:")
-    print(model)
-    
-    # Print dataset information
-    print(f"\nDataset Information:")
-    print(f"Total samples: {len(dataset)}")
-    print(f"Window size: {window_size}")
-    print(f"Number of features: {num_features}")
-    print(f"Batch size: {batch_size}")
-    print(f"Number of LSTM layers: {model.num_layers}")
-    print(f"Hidden size: {model.hidden_size}")
-    print(f"Bidirectional: Yes")
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
+    try:
+        # Load and preprocess data
+        print("Loading data...")
+        data = data_loader.load_data()
+        
+        print("Preprocessing data and calculating technical indicators...")
+        data = data_loader.preprocess_data()
+        
+        # Create visualization directory if it doesn't exist
+        os.makedirs("visualizations", exist_ok=True)
+        
+        # Generate and save basic plots
+        print("Generating basic plots...")
+        plotter.plot_ohlc(data, save_path="visualizations/ohlc_plot.png")
+        plotter.plot_returns(data, save_path="visualizations/returns_plot.png")
+        plotter.plot_volatility(data, save_path="visualizations/volatility_plot.png")
+        plotter.plot_correlation(data, save_path="visualizations/correlation_plot.png")
+        
+        # Generate technical indicator plots
+        print("Generating technical indicator plots...")
+        
+        # Plot Moving Averages
+        ma_data = data[['Close', 'SMA_5', 'SMA_10', 'SMA_20']].copy()
+        plt.figure(figsize=(12, 6))
+        plt.plot(ma_data.index, ma_data['Close'], label='Close', alpha=0.5)
+        plt.plot(ma_data.index, ma_data['SMA_5'], label='SMA 5')
+        plt.plot(ma_data.index, ma_data['SMA_10'], label='SMA 10')
+        plt.plot(ma_data.index, ma_data['SMA_20'], label='SMA 20')
+        plt.title('Moving Averages')
+        plt.legend()
+        plt.savefig("visualizations/ma_plot.png")
+        plt.close()
+        
+        # Plot RSI
+        plt.figure(figsize=(12, 6))
+        plt.plot(data.index, data['RSI'])
+        plt.axhline(y=70, color='r', linestyle='--')
+        plt.axhline(y=30, color='g', linestyle='--')
+        plt.title('Relative Strength Index (RSI)')
+        plt.savefig("visualizations/rsi_plot.png")
+        plt.close()
+        
+        # Plot MACD
+        plt.figure(figsize=(12, 6))
+        plt.plot(data.index, data['MACD'], label='MACD')
+        plt.plot(data.index, data['MACD_Signal'], label='Signal')
+        plt.bar(data.index, data['MACD_Hist'], label='Histogram')
+        plt.title('MACD')
+        plt.legend()
+        plt.savefig("visualizations/macd_plot.png")
+        plt.close()
+        
+        # Plot Bollinger Bands
+        plt.figure(figsize=(12, 6))
+        plt.plot(data.index, data['Close'], label='Close')
+        plt.plot(data.index, data['BB_Upper'], label='Upper Band', alpha=0.5)
+        plt.plot(data.index, data['BB_Middle'], label='Middle Band', alpha=0.5)
+        plt.plot(data.index, data['BB_Lower'], label='Lower Band', alpha=0.5)
+        plt.title('Bollinger Bands')
+        plt.legend()
+        plt.savefig("visualizations/bb_plot.png")
+        plt.close()
+        
+        # Print data statistics
+        print("\nData Statistics:")
+        print(f"Number of trading days: {len(data)}")
+        print(f"Average daily return: {data['Daily_Return'].mean():.4f}")
+        print(f"Daily return standard deviation: {data['Daily_Return'].std():.4f}")
+        print(f"Average daily volatility: {data['Daily_Volatility'].mean():.4f}")
+        
+        # Print technical indicator statistics
+        print("\nTechnical Indicator Statistics:")
+        print("RSI Statistics:")
+        print(f"Mean: {data['RSI'].mean():.2f}")
+        print(f"Std: {data['RSI'].std():.2f}")
+        print(f"Min: {data['RSI'].min():.2f}")
+        print(f"Max: {data['RSI'].max():.2f}")
+        
+        print("\nMACD Statistics:")
+        print(f"Mean: {data['MACD'].mean():.4f}")
+        print(f"Std: {data['MACD'].std():.4f}")
+        
+        # Prepare data for model training
+        print("\nPreparing data for model training...")
+        X_train, X_test, y_train, y_test = data_loader.get_train_test_split()
+        
+        print(f"Training set shape: {X_train.shape}")
+        print(f"Testing set shape: {X_test.shape}")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    main() 
