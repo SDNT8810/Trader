@@ -78,7 +78,7 @@ def plot_indicator_group(df: pd.DataFrame, group_name: str, indicators: List[str
     plt.subplots_adjust(top=0.9)
     
     # Save the figure
-    plt.savefig(f'src/Figs/{group_name.lower().replace(" ", "_")}_indicators.png', dpi=600, bbox_inches='tight')
+    plt.savefig(f'src/Figs/Normalized/{group_name.lower().replace(" ", "_")}_indicators.png', dpi=600, bbox_inches='tight')
     plt.close()
 
 def plot_all_in_one(df: pd.DataFrame, indicators: List[str]):

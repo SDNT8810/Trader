@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 
 class GoldPricePredictor(nn.Module):
-    def __init__(self, input_size, hidden_size=512, num_layers=8, dropout=0.3):
+    def __init__(self, input_size, hidden_size=256, num_layers=4, dropout=0.2):
         super(GoldPricePredictor, self).__init__()
         
         # LSTM layers with residual connections
@@ -43,7 +43,7 @@ class GoldPricePredictor(nn.Module):
         # Attention mechanism with multi-head attention
         self.attention = nn.MultiheadAttention(
             embed_dim=hidden_size * 2,
-            num_heads=8,
+            num_heads=4,  # Reduced number of heads
             dropout=dropout
         )
         
@@ -57,10 +57,7 @@ class GoldPricePredictor(nn.Module):
             nn.LayerNorm(hidden_size // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, hidden_size // 4),
-            nn.LayerNorm(hidden_size // 4),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 4, 1)
+            nn.Linear(hidden_size // 2, 1)
         )
         
     def forward(self, x):
@@ -210,17 +207,19 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
     """Train the model with early stopping and checkpointing."""
     monitor = TrainingMonitor(os.path.join('src', 'Figs', 'Training'))
     best_val_loss = float('inf')
-    patience = 10
+    patience = 15  # Increased patience
     patience_counter = 0
     
-    # Learning rate scheduler
+    # Learning rate scheduler with adjusted parameters
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=0.001,  # Maximum learning rate
+        max_lr=0.01,  # Increased maximum learning rate
         steps_per_epoch=len(train_loader),
         epochs=num_epochs,
-        pct_start=0.3,  # Percentage of cycle spent increasing LR
-        anneal_strategy='cos'  # Cosine annealing
+        pct_start=0.2,  # Reduced warmup period
+        anneal_strategy='cos',  # Cosine annealing
+        div_factor=10.0,  # Initial learning rate = max_lr/10
+        final_div_factor=100.0  # Final learning rate = max_lr/1000
     )
     
     for epoch in range(num_epochs):
@@ -239,8 +238,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
             # Huber loss for robustness
             loss = criterion(outputs.squeeze(), batch_y)
             
-            # L2 regularization
-            l2_lambda = 0.001
+            # L2 regularization with reduced weight
+            l2_lambda = 0.0005  # Reduced regularization
             l2_reg = torch.tensor(0.).to(device)
             for param in model.parameters():
                 l2_reg += torch.norm(param)
@@ -248,8 +247,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer,
             
             loss.backward()
             
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Gradient clipping with increased threshold
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             
             optimizer.step()
             scheduler.step()
@@ -354,7 +353,7 @@ def main():
     train_dataset = TensorDataset(X_train, y_train)
     val_dataset = TensorDataset(X_val, y_val)
     
-    batch_size = 64  # Increased batch size
+    batch_size = 128  # Increased batch size for more stable training
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
@@ -370,11 +369,11 @@ def main():
     # Define loss function (Huber loss for robustness)
     criterion = nn.HuberLoss()
     
-    # Define optimizer with weight decay
+    # Define optimizer with adjusted weight decay
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=0.001,
-        weight_decay=0.01,
+        lr=0.01,  # Increased initial learning rate
+        weight_decay=0.005,  # Reduced weight decay
         betas=(0.9, 0.999)
     )
     
