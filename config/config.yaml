@@ -1,0 +1,149 @@
+model:
+  name: "TradingANN"
+  input_dim: 43  # Number of features per time step
+  hidden_dims: [512, 256, 128, 64, 32]  # 5 hidden layers
+  output_dim: 11  # 10 changes + total change
+  activation: "leaky_relu"  # activation function for hidden layers
+  output_activation: "tanh"  # activation function for output layer
+  weight_init: "kaiming"  # weight initialization method
+  dropout: 0.3  # dropout rate
+  batch_norm: true  # whether to use batch normalization
+  layer_norm: false  # whether to use layer normalization
+  residual: false  # whether to use residual connections
+  bias: true  # whether to use bias in linear layers
+
+training:
+  batch_size: 128
+  learning_rate: 0.0005
+  epochs: 2000
+  loss_function: "huber"
+  optimizer: "adam"
+  early_stopping:
+    patience: 50
+    min_delta: 0.0001
+  lr_scheduler:
+    name: "CosineAnnealingWarmRestarts"
+    T_0: 100
+    T_mult: 2
+    eta_min: 0.00001
+  l2_reg: 0.0001
+  gradient_clip: 1.0
+  checkpoint_freq: 10
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  persistent_workers: true
+  use_amp: true
+  use_mps: true  # For M1/M2 Macs
+  plot_frequency: 5
+  gradient_accumulation_steps: 2
+  device: "auto"  # 'auto', 'cpu', 'cuda', or 'mps'
+  weight_decay: 0.001
+  amsgrad: false
+  checkpoint:
+    save_every: 25
+    keep_last: 10
+
+data:
+  input_shape: [40, 43]  # 60 time steps, 43 features
+  output_shape: [11]     # 11 output features
+  normalization: true
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  shuffle: true
+  pin_memory: true
+  num_workers: 0
+  persistent_workers: false
+
+normalization:
+  methods:
+    min_max:
+      range: [-1, 1]  # Normalization range
+    z_score:
+      epsilon: 1e-8  # Small value to prevent division by zero
+  indicators:
+    price:
+      - "Open"
+      - "High"
+      - "Low"
+      - "Close"
+    price_diffs:
+      - "high_low"
+      - "close_open"
+      - "high_open"
+      - "low_open"
+    volume:
+      - "Volume"
+    ichimoku:
+      - "tenkan_sen"
+      - "kijun_sen"
+      - "senkou_span_b"
+    ichimoku_diffs:
+      - "tenkan_kijun_diff"
+      - "senkou_tenkan_diff"
+      - "senkou_kijun_diff"
+    macd:
+      - "macd"
+      - "macd_signal"
+      - "macd_hist"
+    psar:
+      - "psar"
+    psar_diff:
+      - "psar_diff"
+    ema:
+      - "ema_50"
+      - "ema_200"
+    ema_diff:
+      - "ema_diff"
+    bollinger:
+      - "bb_upper"
+      - "bb_middle"
+      - "bb_lower"
+    bollinger_diffs:
+      - "bb_upper_middle_diff"
+      - "bb_middle_lower_diff"
+      - "bb_upper_lower_diff"
+    rsi:
+      - "rsi_14"
+      - "rsi_28"
+    stoch:
+      - "stoch_k"
+      - "stoch_d"
+    cci:
+      - "cci_14"
+    mfi:
+      - "mfi_14"
+    atr:
+      - "atr_14"
+    adx:
+      - "adx_14"
+      - "plus_di_14"
+      - "minus_di_14"
+    momentum:
+      - "mom_10"
+      - "mom_20"
+    roc:
+      - "roc_10"
+      - "roc_20"
+    williams:
+      - "willr_14"
+
+optimizer:
+  type: "AdamW"
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+  weight_decay: 0.001
+
+scheduler:
+  type: "CosineAnnealingWarmRestarts"
+  T_0: 100  # Number of iterations for the first restart
+  T_mult: 2  # Factor to increase T_0 after a restart
+  eta_min: 1e-6  # Minimum learning rate
+  last_epoch: -1
+
+regularization:
+  l2_lambda: 0.0001  # Reduced L2 regularization
+  dropout: 0.3  # Increased dropout
+  batch_norm: true  # Enable batch normalization 

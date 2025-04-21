@@ -1,0 +1,9 @@
+{
+    "total_epochs": 37,
+    "best_train_loss": 367.14030026554974,
+    "best_val_loss": 361.38071180262517,
+    "total_time_hours": 0.04430195,
+    "final_learning_rate": 1.2499999999999999e-06,
+    "peak_memory_gb": 0.653533935546875,
+    "avg_samples_per_sec": 585.1129162771588
+}
