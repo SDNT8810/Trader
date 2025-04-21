@@ -146,7 +146,7 @@ class NormalizedDataPlotter:
     - Saves plots to Figs/ directory
     """
     
-    def __init__(self, data_path: str = 'NData.csv', config_path: str = 'config/config.yaml'):
+    def __init__(self, data_path: str = 'NData.csv', time_path: str = 'TimeData.csv', config_path: str = 'config/config.yaml'):
         """
         Initialize the plotter
         
@@ -154,12 +154,16 @@ class NormalizedDataPlotter:
         -----------
         data_path : str
             Path to the normalized data CSV file
+        time_path : str
+            Path to the time data CSV file
         config_path : str
             Path to the configuration file
         """
         self.data_path = data_path
+        self.time_path = time_path
         self.config = self._load_config(config_path)
         self.data = None
+        self.time = None
         self._validate_config()
     
     def _load_config(self, config_path: str) -> Dict:
@@ -176,8 +180,9 @@ class NormalizedDataPlotter:
             raise ValueError("Indicator configuration not found in config")
     
     def load_data(self) -> None:
-        """Load the normalized data from CSV file."""
+        """Load the normalized data and time from CSV files."""
         self.data = pd.read_csv(self.data_path)
+        self.time = pd.read_csv(self.time_path)
     
     def plot_indicators(self, save_path: str = 'src/Figs/Normalized/normalized_indicators.png') -> None:
         """
@@ -218,9 +223,10 @@ class NormalizedDataPlotter:
                 if indicator in self.data.columns:
                     ax.plot(self.data[indicator], label=indicator)
             
-            # Add normalization range lines
-            ax.axhline(y=norm_range[0], color='r', linestyle='--', alpha=0.3)
-            ax.axhline(y=norm_range[1], color='r', linestyle='--', alpha=0.3)
+            # Add normalization range lines (except for price data)
+            if group_name not in ['price', 'volume']:
+                ax.axhline(y=norm_range[0], color='r', linestyle='--', alpha=0.3)
+                ax.axhline(y=norm_range[1], color='r', linestyle='--', alpha=0.3)
             
             ax.set_title(f'{group_name.upper()} Indicators (Normalized)')
             ax.legend()
@@ -256,15 +262,18 @@ class NormalizedDataPlotter:
         # Get normalization range
         norm_range = self.config['normalization']['methods']['min_max']['range']
         
-        # Plot price
+        # Plot price (not normalized)
         ax1.plot(self.data['Close'], label='Close Price', color='blue')
-        ax1.set_ylabel('Normalized Price')
+        ax1.set_ylabel('Price')
         ax1.legend(loc='upper left')
         ax1.grid(True)
         
-        # Add normalization range lines
-        ax1.axhline(y=norm_range[0], color='r', linestyle='--', alpha=0.3)
-        ax1.axhline(y=norm_range[1], color='r', linestyle='--', alpha=0.3)
+        # Plot volume (normalized)
+        ax2.plot(self.data['Volume'], label='Volume', color='purple')
+        ax2.axhline(y=norm_range[0], color='r', linestyle='--', alpha=0.3)
+        ax2.axhline(y=norm_range[1], color='r', linestyle='--', alpha=0.3)
+        ax2.set_ylabel('Normalized Volume')
+        ax2.grid(True)
         
         # Add selected indicators
         selected_indicators = [

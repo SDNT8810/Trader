@@ -148,7 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description='Visualize ANN Model')
     parser.add_argument('--config', type=str, required=False,
                       help='Path to configuration file (optional)')
-    parser.add_argument('--output_dir', type=str, default='Figs',
+    parser.add_argument('--output_dir', type=str, default='src/Figs/Model',
                       help='Directory to save visualizations')
     args = parser.parse_args()
     

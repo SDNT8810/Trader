@@ -168,20 +168,24 @@ class RawDataPlotter:
     - Saves plots to Figs/ directory
     """
     
-    def __init__(self, data_path: str = 'Data.csv', config_path: str = 'config/config.yaml'):
+    def __init__(self, data_path: str = 'Data.csv', time_path: str = 'TimeData.csv', config_path: str = 'config/config.yaml'):
         """
         Initialize the plotter
         
         Parameters:
         -----------
         data_path : str
-            Path to the data CSV file
+            Path to the raw data CSV file
+        time_path : str
+            Path to the time data CSV file
         config_path : str
             Path to the configuration file
         """
         self.data_path = data_path
+        self.time_path = time_path
         self.config = self._load_config(config_path)
         self.data = None
+        self.time = None
         self._validate_config()
     
     def _load_config(self, config_path: str) -> Dict:
@@ -198,12 +202,13 @@ class RawDataPlotter:
             raise ValueError("Indicator configuration not found in config")
     
     def load_data(self) -> None:
-        """Load the data from CSV file."""
+        """Load the raw data and time from CSV files."""
         self.data = pd.read_csv(self.data_path)
+        self.time = pd.read_csv(self.time_path)
     
     def plot_indicators(self, save_path: str = 'src/Figs/RawData/raw_indicators.png') -> None:
         """
-        Plot all technical indicators
+        Plot all raw indicators
         
         Parameters:
         -----------
@@ -268,14 +273,14 @@ class RawDataPlotter:
         # Create figure with subplots
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 10), height_ratios=[3, 1])
         
-        # Plot price and volume
+        # Plot price
         ax1.plot(self.data['Close'], label='Close Price', color='blue')
         ax1.set_ylabel('Price')
         ax1.legend(loc='upper left')
         ax1.grid(True)
         
         # Plot volume
-        ax2.bar(range(len(self.data)), self.data['Volume'], color='gray', alpha=0.3)
+        ax2.plot(self.data['Volume'], label='Volume', color='purple')
         ax2.set_ylabel('Volume')
         ax2.grid(True)
         

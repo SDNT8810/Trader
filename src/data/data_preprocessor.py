@@ -249,6 +249,33 @@ class DataPreprocessor:
         
         self.data['willr_14'] = talib.WILLR(high, low, close, timeperiod=14)
     
+    def calculate_price_differences(self) -> None:
+        """Calculate price difference indicators"""
+        self.data['high_low'] = self.data['High'] - self.data['Low']
+        self.data['close_open'] = self.data['Close'] - self.data['Open']
+        self.data['high_open'] = self.data['High'] - self.data['Open']
+        self.data['low_open'] = self.data['Low'] - self.data['Open']
+    
+    def calculate_ichimoku_differences(self) -> None:
+        """Calculate Ichimoku Cloud differences"""
+        self.data['tenkan_kijun_diff'] = self.data['tenkan_sen'] - self.data['kijun_sen']
+        self.data['senkou_tenkan_diff'] = self.data['senkou_span_b'] - self.data['tenkan_sen']
+        self.data['senkou_kijun_diff'] = self.data['senkou_span_b'] - self.data['kijun_sen']
+    
+    def calculate_psar_difference(self) -> None:
+        """Calculate Parabolic SAR difference"""
+        self.data['psar_diff'] = self.data['psar'].diff()
+    
+    def calculate_ema_difference(self) -> None:
+        """Calculate EMA difference"""
+        self.data['ema_diff'] = self.data['ema_50'] - self.data['ema_200']
+    
+    def calculate_bollinger_differences(self) -> None:
+        """Calculate Bollinger Bands differences"""
+        self.data['bb_upper_middle_diff'] = self.data['bb_upper'] - self.data['bb_middle']
+        self.data['bb_middle_lower_diff'] = self.data['bb_middle'] - self.data['bb_lower']
+        self.data['bb_upper_lower_diff'] = self.data['bb_upper'] - self.data['bb_lower']
+    
     def process_data(self) -> pd.DataFrame:
         """
         Process the data and calculate all indicators
@@ -276,6 +303,13 @@ class DataPreprocessor:
         self.calculate_momentum()
         self.calculate_roc()
         self.calculate_williams()
+        
+        # Calculate differences
+        self.calculate_price_differences()
+        self.calculate_ichimoku_differences()
+        self.calculate_psar_difference()
+        self.calculate_ema_difference()
+        self.calculate_bollinger_differences()
         
         # Remove NaN values
         self.data = self.data.dropna()
