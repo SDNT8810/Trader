@@ -54,6 +54,8 @@ checkpoints/
 *.dat
 *.npy
 *.npz
+*.csv
+
 
 # Jupyter Notebook
 .ipynb_checkpoints
