@@ -73,6 +73,14 @@ visualizations/
 *.yaml
 *.yml
 
+# Figures
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+
 # Testing
 .coverage
 htmlcov/
