@@ -198,4 +198,10 @@ $RECYCLE.BIN/
 .fuse_hidden*
 .directory
 .Trash-*
-.nfs* 
+.nfs*
+
+# Large files
+Data.csv
+NData.csv
+**/stablehlo_extension.so
+**/libtensorflow_cc.2.dylib 
