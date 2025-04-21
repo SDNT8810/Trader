@@ -11,10 +11,10 @@ class OutputPlotter:
     Features:
     - Creates subplots for each time step
     - Plots total change
-    - Saves plots to Figs/reward directory
+    - Saves plots to Figs/Reward directory
     """
     
-    def __init__(self, input_file: str = 'Output.csv', fig_dir: str = 'src/Figs/reward'):
+    def __init__(self, input_file: str = 'Output.csv', fig_dir: str = 'src/Figs/Reward'):
         self.input_file = input_file
         self.fig_dir = fig_dir
         self.data = None
@@ -26,9 +26,11 @@ class OutputPlotter:
     def load_data(self) -> None:
         """Load output data"""
         self.data = pd.read_csv(self.input_file)
+        # Convert time column to datetime with European format (DD.MM.YYYY)
+        self.data['Gmt time'] = pd.to_datetime(self.data['Gmt time'], format='%d.%m.%Y %H:%M:%S.%f')
     
     def plot_changes(self) -> None:
-        """Plot individual changes and total"""
+        """Plot individual changes and total against time"""
         if self.data is None:
             self.load_data()
         
@@ -46,17 +48,19 @@ class OutputPlotter:
             col_idx = i % 4
             ax = fig.add_subplot(gs[row, col_idx])
             
-            sns.lineplot(data=self.data[col], ax=ax)
+            sns.lineplot(x='Gmt time', y=col, data=self.data, ax=ax)
             ax.set_title(f'Step {i+1}')
             ax.set_xlabel('Time')
             ax.set_ylabel('Price Change')
+            plt.xticks(rotation=45)
         
         # Plot total change
         ax = fig.add_subplot(gs[2, :2])
-        sns.lineplot(data=self.data['Total_Change'], ax=ax, color='red')
+        sns.lineplot(x='Gmt time', y='Total_Change', data=self.data, ax=ax, color='red')
         ax.set_title('Total Change')
         ax.set_xlabel('Time')
         ax.set_ylabel('Total Price Change')
+        plt.xticks(rotation=45)
         
         # Plot distribution of total change
         ax = fig.add_subplot(gs[2, 2:])

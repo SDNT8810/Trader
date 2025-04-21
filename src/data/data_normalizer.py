@@ -242,14 +242,14 @@ def main():
     normalizer.fit(data_dict)
     normalized_data = normalizer.transform(data_dict)
     
-    # Create DataFrame (without Gmt time)
+    # Create DataFrame with normalized data
     normalized_df = pd.DataFrame(normalized_data)
     
-    # Save normalized data
-    normalized_df.to_csv('NData.csv', index=False)
+    # Add time data back to the DataFrame without normalization
+    normalized_df['Gmt time'] = gmt_time
     
-    # Save time data separately if needed
-    gmt_time.to_csv('TimeData.csv', index=False)
+    # Save normalized data with time
+    normalized_df.to_csv('NData.csv', index=True)
     
     # Print info
     print("\nNormalized Data Info:")
@@ -267,7 +267,7 @@ def main():
             print(f"{indicator}: min={values.min():.3f}, max={values.max():.3f}")
     
     print("\nData normalized successfully and saved to NData.csv")
-    print("Time data saved separately to TimeData.csv")
+    print("Time data included in NData.csv without normalization")
 
 if __name__ == "__main__":
     main()

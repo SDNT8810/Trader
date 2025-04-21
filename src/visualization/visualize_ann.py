@@ -34,112 +34,100 @@ def visualize_model_architecture(
     save_path : Optional[str]
         Path to save the visualization. If None, shows the plot.
     """
-    # Create dummy input
-    dummy_input = torch.randn(input_shape)
-    
-    # Generate visualization
-    dot = make_dot(model(dummy_input), params=dict(model.named_parameters()))
-    
-    if save_path:
+    try:
+        # Create a dummy input with the correct shape
+        batch_size = 1
+        dummy_input = torch.randn(batch_size, model.input_dim)
+        
+        # Create the visualization
+        dot = make_dot(model(dummy_input), params=dict(model.named_parameters()))
         dot.render(save_path, format='png', cleanup=True)
         print(f"Model architecture visualization saved to {save_path}.png")
-    else:
-        dot.view()
+    except Exception as e:
+        print(f"Error creating model visualization: {e}")
 
 def plot_layer_sizes(model: nn.Module, save_path: Optional[str] = None) -> None:
-    """
-    Create a bar plot showing the size of each layer
-    
-    Parameters:
-    -----------
-    model : nn.Module
-        The neural network model
-    save_path : Optional[str]
-        Path to save the plot. If None, shows the plot.
-    """
-    # Get layer sizes
+    """Plot the sizes of each layer in the model."""
     layer_sizes = []
     layer_names = []
     
-    # Input layer
-    layer_sizes.append(model.input_dim)
-    layer_names.append('Input')
+    for name, layer in model.named_modules():
+        if isinstance(layer, nn.Linear):
+            layer_sizes.append(layer.out_features)
+            layer_names.append(name)
+        elif isinstance(layer, nn.LSTM):
+            layer_sizes.append(layer.hidden_size)
+            layer_names.append(name)
     
-    # Hidden layers
-    for i, layer in enumerate(model.hidden_layers):
-        layer_sizes.append(layer.out_features)
-        layer_names.append(f'Hidden {i+1}')
+    # Add input size
+    layer_sizes.insert(0, model.input_dim)
+    layer_names.insert(0, 'input')
     
-    # Output layer
-    layer_sizes.append(model.output_dim)
-    layer_names.append('Output')
-    
-    # Create plot
     plt.figure(figsize=(12, 6))
-    bars = plt.bar(layer_names, layer_sizes)
-    
-    # Add value labels
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                f'{int(height)}',
-                ha='center', va='bottom')
-    
-    plt.title('Neural Network Layer Sizes')
+    plt.plot(range(len(layer_sizes)), layer_sizes, 'bo-', linewidth=2, markersize=10)
+    plt.grid(True)
+    plt.title('Model Layer Sizes')
     plt.xlabel('Layer')
-    plt.ylabel('Number of Neurons')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+    plt.ylabel('Number of Units')
+    plt.xticks(range(len(layer_names)), layer_names, rotation=45)
     
     if save_path:
-        plt.savefig(save_path)
+        plt.savefig(save_path, bbox_inches='tight')
         print(f"Layer sizes plot saved to {save_path}")
     else:
         plt.show()
     plt.close()
 
 def visualize_weights(model: nn.Module, save_path: Optional[str] = None) -> None:
-    """
-    Visualize the weight distributions of each layer
-    
-    Parameters:
-    -----------
-    model : nn.Module
-        The neural network model
-    save_path : Optional[str]
-        Path to save the plot. If None, shows the plot.
-    """
-    # Get all weights
+    """Visualize the distribution of weights in the model."""
     weights = []
     layer_names = []
     
-    # Input layer
-    weights.append(model.input_layer.weight.detach().numpy().flatten())
-    layer_names.append('Input Layer')
+    for name, layer in model.named_modules():
+        if isinstance(layer, nn.Linear):
+            weights.append(layer.weight.detach().cpu().numpy().flatten())
+            layer_names.append(name)
     
-    # Hidden layers
-    for i, layer in enumerate(model.hidden_layers):
-        weights.append(layer.weight.detach().numpy().flatten())
-        layer_names.append(f'Hidden Layer {i+1}')
+    if not weights:
+        print("No weights found to visualize")
+        return
+        
+    plt.figure(figsize=(15, 5))
     
-    # Output layer
-    weights.append(model.output_layer.weight.detach().numpy().flatten())
-    layer_names.append('Output Layer')
+    # Plot weight distributions
+    plt.subplot(121)
+    for w, name in zip(weights, layer_names):
+        plt.hist(w, bins=50, alpha=0.5, label=name)
+    plt.title('Weight Distributions by Layer')
+    plt.xlabel('Weight Value')
+    plt.ylabel('Count')
+    plt.legend()
     
-    # Create plot
-    plt.figure(figsize=(15, 5 * len(weights)))
-    for i, (w, name) in enumerate(zip(weights, layer_names)):
-        plt.subplot(len(weights), 1, i+1)
-        plt.hist(w, bins=50, alpha=0.7)
-        plt.title(f'{name} Weight Distribution')
-        plt.xlabel('Weight Value')
-        plt.ylabel('Frequency')
+    # Plot weight statistics
+    plt.subplot(122)
+    stats = []
+    for w in weights:
+        stats.append([np.mean(w), np.std(w), np.median(w)])
+    stats = np.array(stats)
+    
+    x = np.arange(len(layer_names))
+    width = 0.2
+    
+    plt.bar(x - width, stats[:, 0], width, label='Mean')
+    plt.bar(x, stats[:, 1], width, label='Std')
+    plt.bar(x + width, stats[:, 2], width, label='Median')
+    
+    plt.title('Weight Statistics by Layer')
+    plt.xlabel('Layer')
+    plt.ylabel('Value')
+    plt.xticks(x, layer_names, rotation=45)
+    plt.legend()
     
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path)
-        print(f"Weight distributions plot saved to {save_path}")
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"Weight visualization saved to {save_path}")
     else:
         plt.show()
     plt.close()
