@@ -1,8 +1,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
-from typing import List, Dict
+import yaml
 import os
+from typing import Dict, List
+import numpy as np
 import shutil
 
 def create_fig_directory():
@@ -156,38 +157,162 @@ def plot_all_in_one(df: pd.DataFrame, indicators: List[str]):
     plt.savefig('src/Figs/RawFigs/selected_indicators_overview.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-def plot_raw_data():
-    """Main function to plot all raw indicators."""
-    # Create directory for figures
-    create_fig_directory()
+class RawDataPlotter:
+    """
+    Plot raw technical indicators from Data.csv
     
-    # Read the raw data
-    df = pd.read_csv('Data.csv')
+    Features:
+    - Configurable through config.yaml
+    - Groups indicators by type
+    - Creates subplots for each indicator group
+    - Saves plots to Figs/ directory
+    """
     
-    # Get all indicators (excluding index and unnamed columns)
-    all_indicators = [col for col in df.columns if col not in ['Index', 'Unnamed: 0']]
+    def __init__(self, data_path: str = 'Data.csv', config_path: str = 'config/config.yaml'):
+        """
+        Initialize the plotter
+        
+        Parameters:
+        -----------
+        data_path : str
+            Path to the data CSV file
+        config_path : str
+            Path to the configuration file
+        """
+        self.data_path = data_path
+        self.config = self._load_config(config_path)
+        self.data = None
+        self._validate_config()
     
-    # Create special price-volume plot
-    print("Plotting price and volume data...")
-    plot_price_volume(df)
+    def _load_config(self, config_path: str) -> Dict:
+        """Load configuration from YAML file."""
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
     
-    # Plot selected indicators overview
-    print("Plotting selected indicators overview...")
-    key_indicators = ['Close', 'RSI_12', 'MACD_12_26_9', 'BB_upper_20_2']
-    plot_all_in_one(df, key_indicators)
+    def _validate_config(self) -> None:
+        """Validate the configuration structure."""
+        if 'normalization' not in self.config:
+            raise ValueError("Normalization configuration not found in config file")
+        
+        if 'indicators' not in self.config['normalization']:
+            raise ValueError("Indicator configuration not found in config")
     
-    # Group indicators and plot each group
-    groups = group_indicators(df)
-    for group_name, indicators in groups.items():
-        if indicators:  # Only plot if there are indicators in the group
-            print(f"Plotting {group_name} raw data...")
-            plot_indicator_group(df, group_name, indicators)
+    def load_data(self) -> None:
+        """Load the data from CSV file."""
+        self.data = pd.read_csv(self.data_path)
+    
+    def plot_indicators(self, save_path: str = 'src/Figs/RawData/raw_indicators.png') -> None:
+        """
+        Plot all technical indicators
+        
+        Parameters:
+        -----------
+        save_path : str
+            Path to save the plot
+        """
+        if self.data is None:
+            self.load_data()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        # Get indicator groups from config
+        indicator_groups = self.config['normalization']['indicators']
+        
+        # Calculate number of subplots needed
+        n_groups = len(indicator_groups)
+        n_cols = 2
+        n_rows = (n_groups + 1) // 2
+        
+        # Create figure
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 5*n_rows))
+        axes = axes.flatten()
+        
+        # Plot each indicator group
+        for i, (group_name, indicators) in enumerate(indicator_groups.items()):
+            ax = axes[i]
+            
+            # Plot each indicator in the group
+            for indicator in indicators:
+                if indicator in self.data.columns:
+                    ax.plot(self.data[indicator], label=indicator)
+            
+            ax.set_title(f'{group_name.upper()} Indicators')
+            ax.legend()
+            ax.grid(True)
+        
+        # Remove empty subplots
+        for i in range(n_groups, len(axes)):
+            fig.delaxes(axes[i])
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
+    
+    def plot_price_with_indicators(self, save_path: str = 'src/Figs/RawData/price_with_indicators.png') -> None:
+        """
+        Plot price with selected indicators
+        
+        Parameters:
+        -----------
+        save_path : str
+            Path to save the plot
+        """
+        if self.data is None:
+            self.load_data()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        # Create figure with subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 10), height_ratios=[3, 1])
+        
+        # Plot price and volume
+        ax1.plot(self.data['Close'], label='Close Price', color='blue')
+        ax1.set_ylabel('Price')
+        ax1.legend(loc='upper left')
+        ax1.grid(True)
+        
+        # Plot volume
+        ax2.bar(range(len(self.data)), self.data['Volume'], color='gray', alpha=0.3)
+        ax2.set_ylabel('Volume')
+        ax2.grid(True)
+        
+        # Add selected indicators
+        selected_indicators = [
+            'ema_50', 'ema_200', 'bb_upper', 'bb_lower',
+            'rsi_14', 'macd', 'macd_signal'
+        ]
+        
+        for indicator in selected_indicators:
+            if indicator in self.data.columns:
+                if indicator in ['rsi_14']:
+                    ax2.plot(self.data[indicator], label=indicator)
+                else:
+                    ax1.plot(self.data[indicator], label=indicator)
+        
+        ax1.legend()
+        ax2.legend()
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
 
-if __name__ == "__main__":
+def main():
+    """Main function to create plots"""
     # Set style for better visualization
     plt.style.use('ggplot')
     plt.rcParams['figure.figsize'] = (15, 8)
     plt.rcParams['font.size'] = 10
     
-    # Plot all raw data
-    plot_raw_data() 
+    # Create plotter
+    plotter = RawDataPlotter()
+    
+    # Create plots
+    plotter.plot_indicators()
+    plotter.plot_price_with_indicators()
+
+if __name__ == "__main__":
+    main() 
