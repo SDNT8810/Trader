@@ -1,300 +1,423 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import yaml
-import argparse
-from typing import Dict, Any, Optional
 import os
+from torch.utils.data import DataLoader
+import numpy as np
+import time
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 
-# Default configuration with ALL possible parameters
-DEFAULT_CONFIG = {
-    'model': {
-        'name': "TradingANN",
-        'input_dim': 1720,  # window_size * num_features = 60 * 43
-        'hidden_dims': [512, 512, 256, 128, 64],  # 5 hidden layers
-        'output_dim': 11,  # 10 changes + total change
-        'activation': "leaky_relu",  # activation function for hidden layers
-        'output_activation': "tanh",  # activation function for output layer
-        'weight_init': "kaiming",  # weight initialization method
-        'dropout': 0.3,  # dropout rate
-        'batch_norm': True,  # whether to use batch normalization
-        'layer_norm': False,  # whether to use layer normalization
-        'residual': False,  # whether to use residual connections
-        'bias': True  # whether to use bias in linear layers
-    }
-}
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 class TradingANN(nn.Module):
-    """
-    Fully Connected Artificial Neural Network for Forex Trading
-    
-    Architecture:
-    - Input: m*n dimensional input (window_size * num_features)
-    - 5 Hidden Layers with configurable dimensions
-    - Output: l*1 vector with values in range [-1, +1]
-    
-    Parameters:
-    -----------
-    config : Dict[str, Any], optional
-        Configuration dictionary containing model parameters.
-        If not provided, uses default configuration.
-    """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config):
         super(TradingANN, self).__init__()
         
-        # Use default config if none provided
-        self.config = config if config is not None else DEFAULT_CONFIG
-        model_config = self.config.get('model', DEFAULT_CONFIG['model'])
+        # Store config
+        self.config = config
         
-        # Extract parameters from config with defaults
-        self.input_dim = model_config.get('input_dim', DEFAULT_CONFIG['model']['input_dim'])
-        self.hidden_dims = model_config.get('hidden_dims', DEFAULT_CONFIG['model']['hidden_dims'])
-        self.output_dim = model_config.get('output_dim', DEFAULT_CONFIG['model']['output_dim'])
-        self.activation = model_config.get('activation', DEFAULT_CONFIG['model']['activation'])
-        self.output_activation = model_config.get('output_activation', DEFAULT_CONFIG['model']['output_activation'])
-        self.weight_init = model_config.get('weight_init', DEFAULT_CONFIG['model']['weight_init'])
-        self.dropout = model_config.get('dropout', DEFAULT_CONFIG['model']['dropout'])
-        self.use_batch_norm = model_config.get('batch_norm', DEFAULT_CONFIG['model']['batch_norm'])
-        self.use_layer_norm = model_config.get('layer_norm', DEFAULT_CONFIG['model']['layer_norm'])
-        self.use_residual = model_config.get('residual', DEFAULT_CONFIG['model']['residual'])
-        self.use_bias = model_config.get('bias', DEFAULT_CONFIG['model']['bias'])
+        # Get model parameters from config
+        model_config = config['model']
+        self.window_size = model_config['window_size']
+        self.num_features = model_config['num_features']
+        self.prediction_window = model_config['prediction_window']
         
-        # LSTM layer for temporal processing
-        self.lstm = nn.LSTM(
-            input_size=self.input_dim,
-            hidden_size=self.hidden_dims[0],
-            num_layers=2,
-            batch_first=True,
-            dropout=self.dropout if self.dropout > 0 else 0,
-            bidirectional=True
+        # First layer processes 3D input (batch_size, window_size, num_features)
+        self.first_layer = nn.Sequential(
+            nn.Conv1d(self.num_features, 256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            
+            nn.Conv1d(256, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2)
         )
         
-        # Calculate LSTM output size (bidirectional)
-        lstm_output_size = self.hidden_dims[0] * 2
+        # Calculate size after first layer and flattening
+        self.flattened_size = 128 * self.window_size
         
-        # Input layer (after LSTM)
-        self.input_layer = nn.Linear(lstm_output_size, self.hidden_dims[0], bias=self.use_bias)
-        if self.use_batch_norm:
-            self.bn_input = nn.BatchNorm1d(self.hidden_dims[0])
-        if self.use_layer_norm:
-            self.ln_input = nn.LayerNorm(self.hidden_dims[0])
+        # Main network layers
+        self.layers = nn.Sequential(
+            nn.Linear(self.flattened_size, 1024),
+            nn.ReLU(),
+            nn.BatchNorm1d(1024),
+            nn.Dropout(0.2),
+            
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.BatchNorm1d(512),
+            nn.Dropout(0.2),
+            
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.BatchNorm1d(256),
+            nn.Dropout(0.2),
+            
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            nn.Dropout(0.2),
+            
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.Dropout(0.2),
+            
+            nn.Linear(64, 1)  # Single output for trading signal
+        )
         
-        # Hidden layers
-        self.hidden_layers = nn.ModuleList()
-        for i in range(len(self.hidden_dims)-1):
-            layer_modules = []
-            # Linear transformation
-            layer_modules.append(
-                nn.Linear(self.hidden_dims[i], self.hidden_dims[i+1], bias=self.use_bias)
-            )
-            # Normalization
-            if self.use_batch_norm:
-                layer_modules.append(nn.BatchNorm1d(self.hidden_dims[i+1]))
-            if self.use_layer_norm:
-                layer_modules.append(nn.LayerNorm(self.hidden_dims[i+1]))
-            # Dropout
-            if self.dropout > 0:
-                layer_modules.append(nn.Dropout(self.dropout))
-            # Add all modules for this layer
-            self.hidden_layers.extend(layer_modules)
+        # Set device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Output layer
-        self.output_layer = nn.Linear(self.hidden_dims[-1], self.output_dim, bias=self.use_bias)
+        # Initialize criterion and optimizer
+        self.criterion = nn.MSELoss()
         
-        # Initialize weights
-        self._initialize_weights()
-        
-        # Print model architecture
-        self._print_architecture()
+        # Create checkpoints directory if it doesn't exist
+        os.makedirs(model_config['save_dir'], exist_ok=True)
     
-    def _initialize_weights(self):
-        """Initialize weights using specified initialization method"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                if self.weight_init == "kaiming":
-                    nn.init.kaiming_normal_(m.weight, mode='fan_in', 
-                                         nonlinearity='leaky_relu' if self.activation == 'leaky_relu' else 'relu')
-                elif self.weight_init == "xavier":
-                    nn.init.xavier_normal_(m.weight)
-                elif self.weight_init == "uniform":
-                    nn.init.uniform_(m.weight, -0.1, 0.1)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+    def prepare_data(self, data):
+        """Convert pandas DataFrame to PyTorch Dataset"""
+        from torch.utils.data import TensorDataset
+        
+        # Create sequences using preprocessor
+        X, y = self.preprocessor.create_sequences(data)
+        
+        # Convert to tensors
+        X = torch.FloatTensor(X)
+        y = torch.FloatTensor(y)
+        
+        # Reshape X to (batch_size, window_size * num_features)
+        batch_size = X.shape[0]
+        X = X.reshape(batch_size, -1)
+        
+        return TensorDataset(X, y)
+
+    def forward(self, x):
+        # x shape: (batch_size, window_size, num_features)
+        batch_size = x.size(0)
+        
+        # Permute for Conv1d: (batch_size, num_features, window_size)
+        x = x.permute(0, 2, 1)
+        
+        # Process through first layer
+        x = self.first_layer(x)
+        
+        # Flatten for the main network
+        x = x.reshape(batch_size, -1)
+        
+        # Pass through main network
+        output = self.layers(x)
+        
+        # Apply tanh to get output between -1 and 1
+        return torch.tanh(output)
     
-    def _get_activation(self, name: str):
-        """Get activation function by name"""
-        activations = {
-            "relu": F.relu,
-            "leaky_relu": lambda x: F.leaky_relu(x, negative_slope=0.01),
-            "tanh": torch.tanh,
-            "sigmoid": torch.sigmoid,
-            "elu": F.elu,
-            "selu": F.selu,
-            "gelu": F.gelu
+    def count_parameters(self):
+        """Count total number of trainable parameters in the model"""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+class ModelTrainer:
+    def __init__(self, model, config):
+        self.model = model
+        self.config = config
+        
+        # Set device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {self.device}")
+        
+        # Move model to device
+        self.model = self.model.to(self.device)
+        
+        # Initialize criterion and optimizer
+        self.criterion = nn.MSELoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), 
+                                         lr=self.config['model']['learning_rate'],
+                                         weight_decay=0.001,
+                                         betas=(0.9, 0.999))
+        
+        # Add learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.5,
+            patience=20,
+            min_lr=1e-6,
+            verbose=True
+        )
+        
+        # Create checkpoints directory if it doesn't exist
+        os.makedirs(self.config['model']['save_dir'], exist_ok=True)
+        
+        # Load data preprocessor to get scalers
+        from data.data_preprocessor import DataPreprocessor
+        self.preprocessor = DataPreprocessor()
+        self.preprocessor.process_data()
+        self.mean_price_scaler = self.preprocessor.scalers['Mean_Price']
+    
+    def prepare_data(self, data):
+        """Convert pandas DataFrame to PyTorch Dataset"""
+        from torch.utils.data import TensorDataset
+        
+        # Create sequences using preprocessor
+        X, y = self.preprocessor.create_sequences(data)
+        
+        # Convert to tensors
+        X = torch.FloatTensor(X)
+        y = torch.FloatTensor(y)
+        
+        return TensorDataset(X, y)
+    
+    def calculate_trading_metrics(self, signals, future_prices, current_prices):
+        """Calculate trading performance metrics"""
+        # Convert signals to trading decisions (-1: sell, 0: hold, 1: buy)
+        decisions = torch.sign(signals)
+        
+        # Calculate potential returns
+        returns = torch.zeros_like(signals)
+        for i in range(len(signals)):
+            if decisions[i] > 0:  # Buy signal
+                # Calculate return based on future price movement
+                future_return = (future_prices[i] - current_prices[i]) / current_prices[i]
+                returns[i] = future_return
+            elif decisions[i] < 0:  # Sell signal
+                # Calculate return based on future price movement
+                future_return = (current_prices[i] - future_prices[i]) / current_prices[i]
+                returns[i] = future_return
+        
+        # Calculate metrics
+        accuracy = torch.mean((returns > 0).float()).item() * 100  # Percentage of profitable trades
+        avg_return = torch.mean(returns).item() * 100  # Average return in percentage
+        win_rate = torch.mean((returns > 0).float()).item() * 100  # Win rate
+        avg_win = torch.mean(returns[returns > 0]).item() * 100 if torch.sum(returns > 0) > 0 else 0
+        avg_loss = torch.mean(returns[returns < 0]).item() * 100 if torch.sum(returns < 0) > 0 else 0
+        
+        return {
+            'accuracy': accuracy,
+            'avg_return': avg_return,
+            'win_rate': win_rate,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss
         }
-        return activations.get(name.lower(), F.leaky_relu)
     
-    def _print_architecture(self):
-        """Print model architecture"""
-        print("\nModel Architecture:")
-        print(f"Input Layer: {self.input_dim} -> {self.hidden_dims[0]}")
-        print(f"Normalization: BatchNorm={self.use_batch_norm}, LayerNorm={self.use_layer_norm}")
-        for i in range(len(self.hidden_dims)-1):
-            print(f"Hidden Layer {i+1}: {self.hidden_dims[i]} -> {self.hidden_dims[i+1]}")
-        print(f"Output Layer: {self.hidden_dims[-1]} -> {self.output_dim}")
-        print(f"Activation: {self.activation}")
-        print(f"Output Activation: {self.output_activation}")
-        print(f"Weight Initialization: {self.weight_init}")
-        print(f"Dropout Rate: {self.dropout}")
-        print(f"Using Bias: {self.use_bias}")
-        print(f"Using Residual Connections: {self.use_residual}\n")
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the network
+    def custom_loss(self, signals, targets, future_prices, current_prices):
+        """Custom loss function that evaluates trading performance"""
+        # Convert signals to trading decisions
+        decisions = torch.sign(signals)
         
-        Parameters:
-        -----------
-        x : torch.Tensor
-            Input tensor of shape (batch_size, window_size, input_dim)
+        # Calculate potential returns
+        returns = torch.zeros_like(signals)
+        for i in range(len(signals)):
+            if decisions[i] > 0:  # Buy signal
+                future_return = (future_prices[i] - current_prices[i]) / current_prices[i]
+                returns[i] = future_return
+            elif decisions[i] < 0:  # Sell signal
+                future_return = (current_prices[i] - future_prices[i]) / current_prices[i]
+                returns[i] = future_return
+        
+        # Calculate loss components
+        mse_loss = self.criterion(signals, targets)  # MSE between predicted and target signals
+        return_loss = -torch.mean(returns)  # Negative mean return (we want to maximize returns)
+        
+        # Add regularization for signal magnitude
+        signal_magnitude_loss = torch.mean(torch.abs(signals))
+        
+        # Combine losses with weights
+        total_loss = 0.2 * mse_loss + 0.7 * return_loss + 0.1 * signal_magnitude_loss
+        
+        return total_loss
+    
+    def train(self, train_data, val_data, monitor):
+        """Train the model with trading signal prediction"""
+        # Prepare datasets
+        train_dataset = self.prepare_data(train_data)
+        val_dataset = self.prepare_data(val_data)
+        
+        # Create dataloaders
+        train_loader = DataLoader(train_dataset, 
+                                batch_size=self.config['model']['batch_size'], 
+                                shuffle=True)
+        val_loader = DataLoader(val_dataset, 
+                              batch_size=self.config['model']['batch_size'])
+        
+        best_val_loss = float('inf')
+        patience_counter = 0
+        min_delta = self.config['model']['min_delta']
+        patience = self.config['model']['patience']
+        
+        print("\nTraining Started:")
+        print("=" * 100)
+        print("Epoch | Train Loss | Val Loss | Accuracy | Win Rate | Avg Return | Time")
+        print("-" * 100)
+        
+        for epoch in range(self.config['model']['epochs']):
+            epoch_start_time = time.time()
             
-        Returns:
-        --------
-        torch.Tensor
-            Output tensor of shape (batch_size, output_dim)
-        """
-        # LSTM layer
-        lstm_out, _ = self.lstm(x)
-        # Take the last time step's output
-        x = lstm_out[:, -1, :]
-        
-        # Input layer
-        x = self.input_layer(x)
-        if self.use_batch_norm:
-            x = self.bn_input(x)
-        if self.use_layer_norm:
-            x = self.ln_input(x)
-        x = self._get_activation(self.activation)(x)
-        
-        # Hidden layers
-        layer_idx = 0
-        modules_per_layer = 1 + int(self.use_batch_norm) + int(self.use_layer_norm) + int(self.dropout > 0)
-        
-        while layer_idx < len(self.hidden_layers):
-            # Save for residual connection
-            if self.use_residual:
-                identity = x
+            # Training phase
+            self.model.train()
+            train_loss = 0
+            train_correct = 0
+            train_total = 0
+            train_returns = []
+            train_win_count = 0
             
-            # Apply layer modules
-            for i in range(modules_per_layer):
-                if layer_idx + i < len(self.hidden_layers):
-                    x = self.hidden_layers[layer_idx + i](x)
+            for batch_idx, (inputs, targets) in enumerate(train_loader):
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                
+                # Get current and future prices
+                current_prices = inputs[:, -1, 0]  # Last price in the window
+                future_prices = targets  # Target is now the trading signal
+                
+                # Forward pass
+                signals = self.model(inputs)
+                
+                # Calculate loss using custom loss function
+                loss = self.custom_loss(signals.squeeze(), targets, future_prices, current_prices)
+                
+                # Backward pass
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=0.5)
+                self.optimizer.step()
+                
+                train_loss += loss.item()
+                
+                # Calculate accuracy and returns
+                predicted_direction = torch.sign(signals.squeeze())
+                actual_direction = torch.sign(targets)
+                train_correct += (predicted_direction == actual_direction).sum().item()
+                train_total += targets.size(0)
+                
+                # Calculate returns and win rate
+                returns = targets * predicted_direction
+                train_returns.extend(returns.detach().cpu().numpy())
+                train_win_count += (returns > 0).sum().item()
             
-            # Add residual connection if shapes match
-            if self.use_residual and x.shape == identity.shape:
-                x = x + identity
+            # Calculate training metrics
+            train_loss = train_loss / len(train_loader)
+            train_accuracy = 100 * train_correct / train_total
+            train_returns = np.array(train_returns)
+            train_win_rate = 100 * train_win_count / train_total
+            train_avg_return = np.mean(train_returns) * 100
             
-            layer_idx += modules_per_layer
+            # Validation phase
+            self.model.eval()
+            val_loss = 0
+            val_correct = 0
+            val_total = 0
+            val_returns = []
+            val_win_count = 0
+            
+            with torch.no_grad():
+                for inputs, targets in val_loader:
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)
+                    
+                    # Get current and future prices
+                    current_prices = inputs[:, -1, 0]
+                    future_prices = targets
+                    
+                    # Forward pass
+                    signals = self.model(inputs)
+                    
+                    # Calculate loss
+                    loss = self.custom_loss(signals.squeeze(), targets, future_prices, current_prices)
+                    val_loss += loss.item()
+                    
+                    # Calculate accuracy and returns
+                    predicted_direction = torch.sign(signals.squeeze())
+                    actual_direction = torch.sign(targets)
+                    val_correct += (predicted_direction == actual_direction).sum().item()
+                    val_total += targets.size(0)
+                    
+                    # Calculate returns and win rate
+                    returns = targets * predicted_direction
+                    val_returns.extend(returns.detach().cpu().numpy())
+                    val_win_count += (returns > 0).sum().item()
+            
+            # Calculate validation metrics
+            val_loss = val_loss / len(val_loader)
+            val_accuracy = 100 * val_correct / val_total
+            val_returns = np.array(val_returns)
+            val_win_rate = 100 * val_win_count / val_total
+            val_avg_return = np.mean(val_returns) * 100
+            
+            epoch_time = time.time() - epoch_start_time
+            
+            # Update training monitor
+            monitor.update(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                train_accuracy=train_accuracy,
+                val_accuracy=val_accuracy,
+                train_win_rate=train_win_rate,
+                val_win_rate=val_win_rate,
+                train_avg_return=train_avg_return,
+                val_avg_return=val_avg_return,
+                learning_rate=self.optimizer.param_groups[0]['lr'],
+                gradient_norm=torch.norm(torch.cat([p.grad.view(-1) for p in self.model.parameters()])).item(),
+                batch_size=self.config['model']['batch_size'],
+                num_samples=len(train_dataset)
+            )
+            
+            # Print progress
+            print(f"{epoch+1:5d} | {train_loss:.6f} | {val_loss:.6f} | {val_accuracy:.2f}% | "
+                  f"{val_win_rate:.2f}% | {val_avg_return:.2f}% | {epoch_time:.2f}s")
+            
+            # Update learning rate scheduler
+            self.scheduler.step(val_loss)
+            
+            # Save best model based on validation loss
+            if val_loss < best_val_loss - min_delta:
+                best_val_loss = val_loss
+                patience_counter = 0
+                self.save_model(f"best_model_epoch_{epoch+1}.pt")
+                print(f"New best model saved! (val_loss: {val_loss:.6f}, accuracy: {val_accuracy:.2f}%)")
+            else:
+                patience_counter += 1
+            
+            # Early stopping
+            if patience_counter >= patience:
+                print("\nEarly stopping triggered - No improvement in validation loss")
+                break
         
-        # Output layer with specified activation
-        x = self.output_layer(x)
-        if self.output_activation:
-            x = self._get_activation(self.output_activation)(x)
-        
-        return x
+        print("\nTraining Completed!")
+        print("=" * 100)
+        print(f"Best validation loss: {best_val_loss:.6f}")
+        print(f"Final Accuracy: {val_accuracy:.2f}%")
+        print(f"Final Win Rate: {val_win_rate:.2f}%")
+        print(f"Final Average Return: {val_avg_return:.2f}%")
+    
+    def save_model(self, filename):
+        """Save model checkpoint"""
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'config': self.config
+        }
+        torch.save(checkpoint, os.path.join(self.config['model']['save_dir'], filename))
 
-def load_config(config_path: str) -> Dict[str, Any]:
-    """
-    Load configuration from YAML file with fallback to defaults
-    
-    Parameters:
-    -----------
-    config_path : str
-        Path to the configuration file
-        
-    Returns:
-    --------
-    Dict[str, Any]
-        Configuration dictionary with all parameters set
-    """
-    if not os.path.exists(config_path):
-        print(f"Config file not found at {config_path}. Using default configuration.")
-        return DEFAULT_CONFIG
-    
-    try:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        
-        # Merge with defaults to ensure all parameters exist
-        merged_config = DEFAULT_CONFIG.copy()
-        if 'model' in config:
-            merged_config['model'].update(config['model'])
-        
-        return merged_config
-    except Exception as e:
-        print(f"Error loading config file: {str(e)}")
-        print("Using default configuration.")
-        return DEFAULT_CONFIG
+def create_model(config_path='config/config.yaml'):
+    model = TradingANN(config_path)
+    print(f"Model Architecture:")
+    print(f"Input size: {model.flattened_size} (W={model.window_size} * N={model.num_features})")
+    print(f"Hidden layers: {[model.layers[i].out_features for i in range(0, len(model.layers), 3)]}")
+    print(f"Output size: {model.prediction_window} (M mean prices)")
+    print(f"Total parameters: {model.count_parameters():,}")
+    return model
 
-def create_model(config_path: Optional[str] = None) -> TradingANN:
-    """
-    Create a new TradingANN model with proper parameter handling
-    
-    Parameters:
-    -----------
-    config_path : str, optional
-        Path to the configuration file. If None, uses default configuration.
-        
-    Returns:
-    --------
-    TradingANN
-        New TradingANN model instance
-    """
-    if config_path is None:
-        print("No config path provided. Using default configuration.")
-        return TradingANN()
-    
-    config = load_config(config_path)
-    return TradingANN(config)
+def calculate_mae(self, predictions, targets):
+    """Calculate Mean Absolute Error"""
+    return torch.mean(torch.abs(predictions - targets)).item()
 
-def print_model_info(model: TradingANN, config_source: str = "default configuration"):
-    """
-    Print model information
-    
-    Parameters:
-    -----------
-    model : TradingANN
-        Model to print information about
-    config_source : str, optional
-        Source of the configuration, by default "default configuration"
-    """
-    print(f"\nModel Information (using {config_source}):")
-    print(f"Input Dimension: {model.input_dim}")
-    print(f"Hidden Dimensions: {model.hidden_dims}")
-    print(f"Output Dimension: {model.output_dim}")
-    print(f"Activation: {model.activation}")
-    print(f"Output Activation: {model.output_activation}")
-    print(f"Weight Initialization: {model.weight_init}")
-    print(f"Dropout Rate: {model.dropout}")
-    print(f"Total Parameters: {sum(p.numel() for p in model.parameters())}")
-    print(f"Trainable Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+def calculate_mse(self, predictions, targets):
+    """Calculate Mean Squared Error"""
+    return torch.mean((predictions - targets) ** 2).item()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Trading ANN Model')
-    parser.add_argument('--config', type=str, required=False,
-                      help='Path to configuration file (optional)')
-    args = parser.parse_args()
-    
-    # Create model
-    model = create_model(args.config)
-    
-    # Print model information
-    config_source = args.config if args.config else "default configuration"
-    print_model_info(model, config_source) 
+def calculate_accuracy(self, predictions, targets, tolerance=0.01):
+    """Calculate prediction accuracy within tolerance"""
+    correct = torch.abs(predictions - targets) <= tolerance
+    return torch.mean(correct.float()).item()

@@ -1,56 +1,61 @@
 import pandas as pd
 import numpy as np
+import yaml
 from typing import Optional
+import os
+
+def load_config(config_path: str = 'config/config.yaml') -> dict:
+    """Load configuration from yaml file"""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 class CostFunction:
     """
-    Calculate price changes for multiple time steps and their sum.
+    Calculate mean prices for future time steps using OHLC data.
     
     Args:
-        n_steps (int): Number of time steps to calculate changes for
-        input_file (str): Path to input CSV file
-        output_file (str): Path to save output CSV file
+        config_path (str): Path to configuration file
+        input_file (str): Path to input CSV file (Data.csv)
+        output_file (str): Path to save output CSV file (Output.csv)
     """
     
-    def __init__(self, n_steps: int = 10, input_file: str = 'Gchart.csv', output_file: str = 'Output.csv'):
-        self.n_steps = n_steps
+    def __init__(self, config_path: str = 'config/config.yaml', 
+                 input_file: str = 'Data.csv', 
+                 output_file: str = 'Output.csv'):
+        self.config = load_config(config_path)
+        self.prediction_window = self.config['model']['prediction_window']
         self.input_file = input_file
         self.output_file = output_file
     
     def load_data(self) -> pd.DataFrame:
-        """Load data from CSV file"""
+        """Load OHLC data from CSV file"""
         return pd.read_csv(self.input_file)
     
     def calculate_mean_price(self, data: pd.DataFrame) -> np.ndarray:
         """Calculate mean price from OHLC data"""
-        return (data['Open'] + data['High'] + data['Low'] + data['Close']) / 4
+        return (data['High'] + data['Open'] + data['Close'] + data['Low']) / 4
     
-    def calculate_changes(self, mean_price: np.ndarray, time_data: pd.Series) -> pd.DataFrame:
+    def calculate_future_means(self, mean_price: np.ndarray) -> pd.DataFrame:
         """
-        Calculate price changes for n steps and their sum.
-        For each step i, calculates P(t+i) - P(t).
+        Calculate mean prices for future time steps.
+        For each time t, calculates mean prices from t+1 to t+prediction_window.
         """
         length = len(mean_price)
-        changes = np.zeros((length, self.n_steps))
+        future_means = np.zeros((length, self.prediction_window))
         
-        # Calculate changes for each step
-        for i in range(1, self.n_steps + 1):
-            # Shift prices i steps forward and subtract current prices
+        # Calculate future means for each step
+        for i in range(1, self.prediction_window + 1):
+            # Shift prices i steps forward
             future_prices = np.roll(mean_price, -i)
-            # Calculate changes
-            changes[:-i, i-1] = future_prices[:-i] - mean_price[:-i]
+            # Store future means
+            future_means[:-i, i-1] = future_prices[:-i]
             # Pad the last i rows with NaN
-            changes[-i:, i-1] = np.nan
-        
-        # Calculate total change (sum of all available changes for each time point)
-        total_change = np.nansum(changes, axis=1)
+            future_means[-i:, i-1] = np.nan
         
         # Create DataFrame with column names
-        columns = [f'Change_{i+1}' for i in range(self.n_steps)] + ['Total_Change']
-        df = pd.DataFrame(np.column_stack([changes, total_change]), columns=columns)
-        
-        # Add time data
-        df['Gmt time'] = time_data
+        columns = ['index'] + [f'Mean_Price_t+{i}' for i in range(1, self.prediction_window + 1)]
+        df = pd.DataFrame(np.column_stack([np.arange(length), future_means]), 
+                         columns=columns)
         
         # Remove rows with NaN values
         df = df.dropna()
@@ -65,12 +70,12 @@ class CostFunction:
         """Run the cost function calculation"""
         data = self.load_data()
         mean_price = self.calculate_mean_price(data)
-        changes_df = self.calculate_changes(mean_price, data['Gmt time'])
-        self.save_results(changes_df)
+        future_means_df = self.calculate_future_means(mean_price)
+        self.save_results(future_means_df)
         print(f"Results saved to {self.output_file}")
-        print(f"Output shape: {changes_df.shape}")
+        print(f"Output shape: {future_means_df.shape}")
         print("\nSummary statistics:")
-        print(changes_df.describe())
+        print(future_means_df.describe())
 
 def main():
     """Run the cost function"""

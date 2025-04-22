@@ -5,27 +5,9 @@ from typing import Dict, Any
 import os
 import yaml
 from pathlib import Path
+from sklearn.preprocessing import MinMaxScaler
 
 class DataPreprocessor:
-    """
-    Data preprocessor for Gold price data with technical indicators
-    
-    Features are configured in config.yaml:
-    1. Ichimoku Cloud (H1)
-    2. MACD (H1)
-    3. Parabolic SAR (H1)
-    4. EMA indicators
-    5. Bollinger Bands (H1)
-    6. RSI indicators
-    7. Stochastic indicators
-    8. CCI indicator
-    9. MFI indicator
-    10. ATR indicator
-    11. ADX indicators
-    12. Momentum indicators
-    13. ROC indicators
-    14. Williams %R indicator
-    """
     
     def __init__(self, input_file: str = 'Gchart.csv', config_path: str = 'config/config.yaml'):
         """
@@ -53,228 +35,204 @@ class DataPreprocessor:
         if 'normalization' not in self.config:
             raise ValueError("Normalization configuration not found in config file")
         
-        if 'indicators' not in self.config['normalization']:
-            raise ValueError("Indicator configuration not found in config")
+        if not all(key in self.config['normalization'] for key in ['price_features', 'ratio_features', 'indicator_features']):
+            raise ValueError("Feature group configurations not found in config")
     
-    def load_data(self) -> None:
-        """Load and prepare the raw data"""
-        # Read CSV file
-        self.data = pd.read_csv(self.input_file)
+    def calculate_technical_indicators(self, data):
+        """Calculate technical indicators"""
+        print("Calculating technical indicators...")
         
-        # Ensure required columns exist
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        missing_columns = [col for col in required_columns if col not in self.data.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
+        # 1. Ichimoku Cloud
+        print("- Ichimoku Cloud")
+        high = data['High'].values
+        low = data['Low'].values
+        close = data['Close'].values
         
-        # Convert to float type
-        for col in required_columns:
-            self.data[col] = self.data[col].astype(float)
+        # Tenkan-sen (Conversion Line)
+        period9_high = pd.Series(high).rolling(window=9).max()
+        period9_low = pd.Series(low).rolling(window=9).min()
+        data['Tenkan_sen'] = (period9_high + period9_low) / 2
+        
+        # Kijun-sen (Base Line)
+        period26_high = pd.Series(high).rolling(window=26).max()
+        period26_low = pd.Series(low).rolling(window=26).min()
+        data['Kijun_sen'] = (period26_high + period26_low) / 2
+        
+        # Senkou Span A (Leading Span A)
+        data['Senkou_Span_A'] = ((data['Tenkan_sen'] + data['Kijun_sen']) / 2).shift(26)
+        
+        # Senkou Span B (Leading Span B)
+        period52_high = pd.Series(high).rolling(window=52).max()
+        period52_low = pd.Series(low).rolling(window=52).min()
+        data['Senkou_Span_B'] = ((period52_high + period52_low) / 2).shift(26)
+        
+        # 2. MACD
+        print("- MACD")
+        exp1 = data['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = data['Close'].ewm(span=26, adjust=False).mean()
+        data['MACD'] = exp1 - exp2
+        data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+        data['MACD_Hist'] = data['MACD'] - data['MACD_Signal']
+        
+        # 3. Parabolic SAR
+        print("- PSAR")
+        data['PSAR'] = talib.SAR(data['High'], data['Low'], 
+                                acceleration=0.02, maximum=0.2)
+        
+        # 4. EMA 50
+        print("- EMA 50")
+        data['EMA_50'] = data['Close'].ewm(span=50, adjust=False).mean()
+        
+        # 5. EMA 200
+        print("- EMA 200")
+        data['EMA_200'] = data['Close'].ewm(span=200, adjust=False).mean()
+        
+        # 6. Bollinger Bands
+        print("- Bollinger Bands")
+        data['BB_Middle'] = data['Close'].rolling(window=20).mean()
+        data['BB_Upper'] = data['BB_Middle'] + 2 * data['Close'].rolling(window=20).std()
+        data['BB_Lower'] = data['BB_Middle'] - 2 * data['Close'].rolling(window=20).std()
+        
+        # Calculate additional features
+        data['BB_Width'] = (data['BB_Upper'] - data['BB_Lower']) / data['BB_Middle']
+        data['EMA_50_200_Ratio'] = data['EMA_50'] / data['EMA_200']
+        data['Price_EMA_50_Ratio'] = data['Close'] / data['EMA_50']
+        data['Price_EMA_200_Ratio'] = data['Close'] / data['EMA_200']
+        
+        # Fill NaN values
+        data = data.fillna(method='ffill').fillna(method='bfill')
+        
+        print("Technical indicators calculation completed.")
+        return data
     
-    def calculate_ichimoku(self) -> None:
-        """Calculate Ichimoku Cloud indicators"""
-        high = self.data['High']
-        low = self.data['Low']
+    def normalize_features(self, data):
+        """Normalize features using MinMaxScaler"""
+        print("\nNormalizing features...")
         
-        # Tenkan-sen (Conversion Line): (9-period high + 9-period low)/2
-        period9_high = talib.MAX(high, timeperiod=9)
-        period9_low = talib.MIN(low, timeperiod=9)
-        self.data['tenkan_sen'] = (period9_high + period9_low) / 2
+        # Initialize scalers dictionary
+        self.scalers = {}
         
-        # Kijun-sen (Base Line): (26-period high + 26-period low)/2
-        period26_high = talib.MAX(high, timeperiod=26)
-        period26_low = talib.MIN(low, timeperiod=26)
-        self.data['kijun_sen'] = (period26_high + period26_low) / 2
+        # Get feature groups from config
+        price_features = self.config['normalization']['price_features']
+        ratio_features = self.config['normalization']['ratio_features']
+        indicator_features = self.config['normalization']['indicator_features']
         
-        # Senkou Span B (Leading Span B): (52-period high + 52-period low)/2
-        period52_high = talib.MAX(high, timeperiod=52)
-        period52_low = talib.MIN(low, timeperiod=52)
-        self.data['senkou_span_b'] = (period52_high + period52_low) / 2
+        # Create normalized data DataFrame
+        normalized_data = pd.DataFrame(index=data.index)
+        
+        # Normalize price features (0 to 1 range)
+        for feature in price_features:
+            self.scalers[feature] = MinMaxScaler()
+            normalized_data[feature] = self.scalers[feature].fit_transform(data[[feature]]).flatten()
+        
+        # Normalize ratio features (0 to 2 range)
+        for feature in ratio_features:
+            self.scalers[feature] = MinMaxScaler(feature_range=(0, 2))
+            normalized_data[feature] = self.scalers[feature].fit_transform(data[[feature]]).flatten()
+        
+        # Normalize indicator features (-1 to 1 range)
+        for feature in indicator_features:
+            self.scalers[feature] = MinMaxScaler(feature_range=(-1, 1))
+            normalized_data[feature] = self.scalers[feature].fit_transform(data[[feature]]).flatten()
+        
+        # Add target (Mean_Price) with standard normalization
+        self.scalers['Mean_Price'] = MinMaxScaler()
+        normalized_data['Mean_Price'] = self.scalers['Mean_Price'].fit_transform(data[['Mean_Price']]).flatten()
+        
+        print(f"\nFinal processed data shape: {normalized_data.shape}")
+        print(f"Features ({len(normalized_data.columns)-1}):")
+        for col in normalized_data.columns:
+            if col != 'Mean_Price':
+                print(f"- {col}")
+        
+        return normalized_data
     
-    def calculate_macd(self) -> None:
-        """Calculate MACD indicators"""
-        close = self.data['Close']
-        
-        # Calculate MACD, Signal, and Histogram
-        macd, signal, hist = talib.MACD(
-            close,
-            fastperiod=12,
-            slowperiod=26,
-            signalperiod=9
-        )
-        
-        self.data['macd'] = macd
-        self.data['macd_signal'] = signal
-        self.data['macd_hist'] = hist
+    def load_data(self):
+        """Load and preprocess the data"""
+        try:
+            print("\nLoading and preprocessing data...")
+            # Load data from input file
+            data = pd.read_csv(self.input_file)
+            print(f"Raw data shape: {data.shape}")
+            
+            # Select only HOCL and Volume columns
+            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            data = data[required_columns]
+            
+            # Calculate mean price (average of HOCL)
+            data['Mean_Price'] = data[['High', 'Open', 'Close', 'Low']].mean(axis=1)
+            
+            # Calculate technical indicators
+            data = self.calculate_technical_indicators(data)
+            
+            # Store original data for later use
+            self.original_data = data.copy()
+            
+            # Normalize features
+            self.data = self.normalize_features(data)
+            
+            return self.data
+            
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
-    def calculate_psar(self) -> None:
-        """Calculate Parabolic SAR"""
-        high = self.data['High']
-        low = self.data['Low']
+    def create_sequences(self, data):
+        """Create input sequences and targets for trading signal prediction"""
+        X, y = [], []
+        window_size = self.config['model']['window_size']
+        prediction_window = self.config['model']['prediction_window']
         
-        # Default PSAR parameters
-        step = 0.02
-        maximum = 0.2
+        # Get all feature columns except Mean_Price
+        feature_columns = [col for col in data.columns if col != 'Mean_Price']
+        print(f"\nCreating sequences using {len(feature_columns)} features:")
+        for col in feature_columns:
+            print(f"- {col}")
         
-        # Calculate PSAR
-        self.data['psar'] = talib.SAR(
-            high,
-            low,
-            acceleration=step,
-            maximum=maximum
-        )
-    
-    def calculate_ema(self) -> None:
-        """Calculate EMA indicators"""
-        close = self.data['Close']
+        for i in range(len(data) - window_size - prediction_window + 1):
+            # Input sequence: All features for past window_size time steps
+            X.append(data.iloc[i:i+window_size][feature_columns].values)
+            
+            # Get current price and future prices
+            current_price = data.iloc[i+window_size-1]['Mean_Price']
+            future_prices = data.iloc[i+window_size:i+window_size+prediction_window]['Mean_Price'].values
+            
+            # Calculate various statistics for the prediction window
+            mean_future = np.mean(future_prices)
+            max_future = np.max(future_prices)
+            min_future = np.min(future_prices)
+            sum_future = np.sum(future_prices)
+            
+            # Calculate potential returns for different strategies
+            mean_return = (mean_future - current_price) / current_price
+            max_return = (max_future - current_price) / current_price
+            min_return = (min_future - current_price) / current_price
+            sum_return = (sum_future - current_price * prediction_window) / (current_price * prediction_window)
+            
+            # Determine the best trading signal based on all statistics
+            # We'll use a weighted combination of all returns
+            weights = np.array([0.4, 0.3, 0.2, 0.1])  # Weights for mean, max, min, sum returns
+            returns = np.array([mean_return, max_return, min_return, sum_return])
+            weighted_return = np.sum(weights * returns)
+            
+            # Create trading signal based on weighted return
+            # Scale the return to make signals more pronounced
+            signal = np.clip(weighted_return * 5, -1, 1)
+            
+            # If the signal is very close to 0, set it to 0 (do nothing)
+            if abs(signal) < 0.1:
+                signal = 0
+            
+            y.append(signal)
         
-        # Default EMA periods
-        ema_periods = [50, 200]
-        
-        # Calculate EMAs
-        for period in ema_periods:
-            self.data[f'ema_{period}'] = talib.EMA(close, timeperiod=period)
-    
-    def calculate_bollinger_bands(self) -> None:
-        """Calculate Bollinger Bands"""
-        close = self.data['Close']
-        
-        # Default Bollinger Bands parameters
-        period = 20
-        nbdev = 2
-        
-        # Calculate Bollinger Bands
-        upper, middle, lower = talib.BBANDS(
-            close,
-            timeperiod=period,
-            nbdevup=nbdev,
-            nbdevdn=nbdev,
-            matype=0
-        )
-        
-        self.data['bb_upper'] = upper
-        self.data['bb_middle'] = middle
-        self.data['bb_lower'] = lower
-    
-    def calculate_rsi(self) -> None:
-        """Calculate RSI indicators"""
-        close = self.data['Close']
-        
-        # Calculate RSI for different periods
-        self.data['rsi_14'] = talib.RSI(close, timeperiod=14)
-        self.data['rsi_28'] = talib.RSI(close, timeperiod=28)
-    
-    def calculate_stochastic(self) -> None:
-        """Calculate Stochastic indicators"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        
-        # Calculate Stochastic
-        slowk, slowd = talib.STOCH(
-            high,
-            low,
-            close,
-            fastk_period=14,
-            slowk_period=3,
-            slowk_matype=0,
-            slowd_period=3,
-            slowd_matype=0
-        )
-        
-        self.data['stoch_k'] = slowk
-        self.data['stoch_d'] = slowd
-    
-    def calculate_cci(self) -> None:
-        """Calculate CCI indicator"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        
-        self.data['cci_14'] = talib.CCI(high, low, close, timeperiod=14)
-    
-    def calculate_mfi(self) -> None:
-        """Calculate Money Flow Index"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        volume = self.data['Volume']
-        
-        self.data['mfi_14'] = talib.MFI(high, low, close, volume, timeperiod=14)
-    
-    def calculate_atr(self) -> None:
-        """Calculate Average True Range"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        
-        self.data['atr_14'] = talib.ATR(high, low, close, timeperiod=14)
-    
-    def calculate_adx(self) -> None:
-        """Calculate ADX indicators"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        
-        # Calculate ADX
-        adx = talib.ADX(high, low, close, timeperiod=14)
-        plus_di = talib.PLUS_DI(high, low, close, timeperiod=14)
-        minus_di = talib.MINUS_DI(high, low, close, timeperiod=14)
-        
-        self.data['adx_14'] = adx
-        self.data['plus_di_14'] = plus_di
-        self.data['minus_di_14'] = minus_di
-    
-    def calculate_momentum(self) -> None:
-        """Calculate Momentum indicators"""
-        close = self.data['Close']
-        
-        # Calculate Momentum for different periods
-        self.data['mom_10'] = talib.MOM(close, timeperiod=10)
-        self.data['mom_20'] = talib.MOM(close, timeperiod=20)
-    
-    def calculate_roc(self) -> None:
-        """Calculate Rate of Change indicators"""
-        close = self.data['Close']
-        
-        # Calculate ROC for different periods
-        self.data['roc_10'] = talib.ROC(close, timeperiod=10)
-        self.data['roc_20'] = talib.ROC(close, timeperiod=20)
-    
-    def calculate_williams(self) -> None:
-        """Calculate Williams %R indicator"""
-        high = self.data['High']
-        low = self.data['Low']
-        close = self.data['Close']
-        
-        self.data['willr_14'] = talib.WILLR(high, low, close, timeperiod=14)
-    
-    def calculate_price_differences(self) -> None:
-        """Calculate price difference indicators"""
-        self.data['high_low'] = self.data['High'] - self.data['Low']
-        self.data['close_open'] = self.data['Close'] - self.data['Open']
-        self.data['high_open'] = self.data['High'] - self.data['Open']
-        self.data['low_open'] = self.data['Low'] - self.data['Open']
-    
-    def calculate_ichimoku_differences(self) -> None:
-        """Calculate Ichimoku Cloud differences"""
-        self.data['tenkan_kijun_diff'] = self.data['tenkan_sen'] - self.data['kijun_sen']
-        self.data['senkou_tenkan_diff'] = self.data['senkou_span_b'] - self.data['tenkan_sen']
-        self.data['senkou_kijun_diff'] = self.data['senkou_span_b'] - self.data['kijun_sen']
-    
-    def calculate_psar_difference(self) -> None:
-        """Calculate Parabolic SAR difference"""
-        self.data['psar_diff'] = self.data['psar'].diff()
-    
-    def calculate_ema_difference(self) -> None:
-        """Calculate EMA difference"""
-        self.data['ema_diff'] = self.data['ema_50'] - self.data['ema_200']
-    
-    def calculate_bollinger_differences(self) -> None:
-        """Calculate Bollinger Bands differences"""
-        self.data['bb_upper_middle_diff'] = self.data['bb_upper'] - self.data['bb_middle']
-        self.data['bb_middle_lower_diff'] = self.data['bb_middle'] - self.data['bb_lower']
-        self.data['bb_upper_lower_diff'] = self.data['bb_upper'] - self.data['bb_lower']
+        X = np.array(X)
+        y = np.array(y)
+        print(f"\nSequence shapes:")
+        print(f"X shape: {X.shape}")
+        print(f"y shape: {y.shape}")
+        return X, y
     
     def process_data(self) -> pd.DataFrame:
         """
@@ -285,34 +243,13 @@ class DataPreprocessor:
         pd.DataFrame
             Processed data with all indicators
         """
-        # Load data
-        self.load_data()
-        
-        # Calculate indicators
-        self.calculate_ichimoku()
-        self.calculate_macd()
-        self.calculate_psar()
-        self.calculate_ema()
-        self.calculate_bollinger_bands()
-        self.calculate_rsi()
-        self.calculate_stochastic()
-        self.calculate_cci()
-        self.calculate_mfi()
-        self.calculate_atr()
-        self.calculate_adx()
-        self.calculate_momentum()
-        self.calculate_roc()
-        self.calculate_williams()
-        
-        # Calculate differences
-        self.calculate_price_differences()
-        self.calculate_ichimoku_differences()
-        self.calculate_psar_difference()
-        self.calculate_ema_difference()
-        self.calculate_bollinger_differences()
+        # Load and preprocess data
+        self.data = self.load_data()
         
         # Remove NaN values
-        self.data = self.data.dropna()
+        if self.data is not None:
+            self.data = self.data.dropna()
+            print(f"\nFinal data shape after removing NaN: {self.data.shape}")
         
         return self.data
     
@@ -329,7 +266,7 @@ class DataPreprocessor:
             raise ValueError("No data to save. Run process_data() first.")
         
         self.data.to_csv(output_file, index=False)
-        print(f"Processed data saved to {output_file}")
+        print(f"\nProcessed data saved to {output_file}")
 
 def main():
     """Main function to process the data"""
@@ -339,15 +276,11 @@ def main():
     # Process data
     processed_data = preprocessor.process_data()
     
-    # Print data info
-    print("\nProcessed Data Info:")
-    print(f"Shape: {processed_data.shape}")
-    print("\nColumns:")
-    for col in processed_data.columns:
-        print(f"- {col}")
-    
-    # Save data
-    preprocessor.save_data()
+    if processed_data is not None:
+        # Save data
+        preprocessor.save_data()
+    else:
+        print("Error: Data processing failed.")
 
 if __name__ == "__main__":
     main()

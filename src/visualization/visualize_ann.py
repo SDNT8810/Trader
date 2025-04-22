@@ -37,7 +37,7 @@ def visualize_model_architecture(
     try:
         # Create a dummy input with the correct shape
         batch_size = 1
-        dummy_input = torch.randn(batch_size, model.input_dim)
+        dummy_input = torch.randn(batch_size, model.window_size * model.num_features)
         
         # Create the visualization
         dot = make_dot(model(dummy_input), params=dict(model.named_parameters()))
@@ -51,17 +51,20 @@ def plot_layer_sizes(model: nn.Module, save_path: Optional[str] = None) -> None:
     layer_sizes = []
     layer_names = []
     
+    # Add input size
+    input_size = model.window_size * model.num_features
+    layer_sizes.append(input_size)
+    layer_names.append('input')
+    
+    # Add hidden layers
     for name, layer in model.named_modules():
         if isinstance(layer, nn.Linear):
             layer_sizes.append(layer.out_features)
             layer_names.append(name)
-        elif isinstance(layer, nn.LSTM):
-            layer_sizes.append(layer.hidden_size)
-            layer_names.append(name)
     
-    # Add input size
-    layer_sizes.insert(0, model.input_dim)
-    layer_names.insert(0, 'input')
+    # Add output size
+    layer_sizes.append(model.prediction_window)
+    layer_names.append('output')
     
     plt.figure(figsize=(12, 6))
     plt.plot(range(len(layer_sizes)), layer_sizes, 'bo-', linewidth=2, markersize=10)
@@ -134,8 +137,8 @@ def visualize_weights(model: nn.Module, save_path: Optional[str] = None) -> None
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize ANN Model')
-    parser.add_argument('--config', type=str, required=False,
-                      help='Path to configuration file (optional)')
+    parser.add_argument('--config', type=str, default='config/config.yaml',
+                      help='Path to configuration file')
     parser.add_argument('--output_dir', type=str, default='src/Figs/Model',
                       help='Directory to save visualizations')
     args = parser.parse_args()
@@ -148,7 +151,7 @@ def main():
     
     # Visualize model architecture
     arch_path = os.path.join(args.output_dir, 'model_architecture')
-    visualize_model_architecture(model, (1, model.input_dim), arch_path)
+    visualize_model_architecture(model, (1, model.window_size * model.num_features), arch_path)
     
     # Plot layer sizes
     layer_path = os.path.join(args.output_dir, 'layer_sizes.png')

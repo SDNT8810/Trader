@@ -1,14 +1,14 @@
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import numpy as np
-import pandas as pd
 import os
-from datetime import datetime
-import psutil
-import torch
-from typing import Dict, List, Optional
 import json
 import yaml
+import numpy as np
+import pandas as pd
+from datetime import datetime
+import psutil
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import torch
+from typing import Dict, List, Optional
 
 class TrainingMonitor:
     def __init__(self, config_path: str = 'config/config.yaml', save_dir: str = 'src/Figs/Training'):
@@ -27,12 +27,15 @@ class TrainingMonitor:
             'val_loss': [],
             'train_accuracy': [],
             'val_accuracy': [],
+            'train_win_rate': [],
+            'val_win_rate': [],
+            'train_avg_return': [],
+            'val_avg_return': [],
             'learning_rate': [],
             'gradient_norm': [],
             'memory_used': [],
             'samples_per_sec': [],
-            'time_elapsed': [],
-            'worker_id': []  # Track which worker produced each metric
+            'time_elapsed': []
         }
         
         self.start_time = datetime.now()
@@ -42,11 +45,11 @@ class TrainingMonitor:
             rows=3, cols=2,
             subplot_titles=(
                 'Training & Validation Loss',
-                'Training & Validation Accuracy',
-                'Learning Rate',
-                'Gradient Norm',
-                'Memory Usage (GB)',
-                'Training Speed'
+                'Trading Performance',
+                'Accuracy & Win Rate',
+                'Average Returns',
+                'Learning Rate & Gradient',
+                'System Metrics'
             ),
             vertical_spacing=0.15,
             horizontal_spacing=0.1
@@ -59,7 +62,7 @@ class TrainingMonitor:
             showlegend=True,
             template='plotly_dark',
             title={
-                'text': 'Training Progress Dashboard',
+                'text': 'Trading Model Training Progress',
                 'y':0.95,
                 'x':0.5,
                 'xanchor': 'center',
@@ -70,8 +73,10 @@ class TrainingMonitor:
     
     def update(self, epoch: int, train_loss: float, val_loss: float, 
                train_accuracy: float, val_accuracy: float,
+               train_win_rate: float, val_win_rate: float,
+               train_avg_return: float, val_avg_return: float,
                learning_rate: float, gradient_norm: float, batch_size: int,
-               num_samples: int, worker_id: int) -> None:
+               num_samples: int) -> None:
         """Update metrics with new values"""
         # Calculate time elapsed
         time_elapsed = (datetime.now() - self.start_time).total_seconds() / 3600  # hours
@@ -88,21 +93,35 @@ class TrainingMonitor:
         self.metrics['val_loss'].append(val_loss)
         self.metrics['train_accuracy'].append(train_accuracy)
         self.metrics['val_accuracy'].append(val_accuracy)
+        self.metrics['train_win_rate'].append(train_win_rate)
+        self.metrics['val_win_rate'].append(val_win_rate)
+        self.metrics['train_avg_return'].append(train_avg_return)
+        self.metrics['val_avg_return'].append(val_avg_return)
         self.metrics['learning_rate'].append(learning_rate)
         self.metrics['gradient_norm'].append(gradient_norm)
         self.metrics['memory_used'].append(memory_used)
         self.metrics['samples_per_sec'].append(samples_per_sec)
         self.metrics['time_elapsed'].append(time_elapsed)
-        self.metrics['worker_id'].append(worker_id)
         
         # Save metrics to JSON
         self._save_metrics()
+        
+        # Update plots
+        self.plot()
     
     def _save_metrics(self) -> None:
         """Save metrics to JSON file"""
-        metrics_file = os.path.join(self.save_dir, 'training_metrics.json')
-        with open(metrics_file, 'w') as f:
-            json.dump(self.metrics, f, indent=4)
+        # Convert numpy types to Python types for JSON serialization
+        metrics_copy = {}
+        for key, value in self.metrics.items():
+            if isinstance(value, list):
+                metrics_copy[key] = [float(v) if isinstance(v, (np.float32, np.float64)) else v for v in value]
+            else:
+                metrics_copy[key] = float(value) if isinstance(value, (np.float32, np.float64)) else value
+        
+        # Save to JSON file
+        with open(os.path.join(self.save_dir, 'training_metrics.json'), 'w') as f:
+            json.dump(metrics_copy, f, indent=4)
     
     def plot(self) -> None:
         """Create and save interactive plots"""
@@ -112,81 +131,84 @@ class TrainingMonitor:
         # Convert metrics to DataFrame for easier manipulation
         df = pd.DataFrame(self.metrics)
         
-        # Find best model's metrics (lowest validation loss)
-        best_worker_metrics = {}
-        for worker_id in df['worker_id'].unique():
-            worker_df = df[df['worker_id'] == worker_id]
-            best_epoch_idx = worker_df['val_loss'].idxmin()
-            best_worker_metrics[worker_id] = worker_df.loc[best_epoch_idx]
-        
-        # Get the overall best worker
-        best_worker_id = min(best_worker_metrics, key=lambda x: best_worker_metrics[x]['val_loss'])
-        best_worker_df = df[df['worker_id'] == best_worker_id]
-        
-        # Create subplots with shared x-axis
-        self.fig = make_subplots(
-            rows=3, cols=2,
-            subplot_titles=(
-                'Training & Validation Loss',
-                'Training & Validation Accuracy',
-                'Learning Rate',
-                'Gradient Norm',
-                'Memory Usage (GB)',
-                'Training Speed'
-            ),
-            vertical_spacing=0.15,
-            horizontal_spacing=0.1,
-            shared_xaxes=True
-        )
-        
         # 1. Training & Validation Loss
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['train_loss'],
+            go.Scatter(x=df['epoch'], y=df['train_loss'],
                       name='Train Loss', line=dict(color='#00ff00', width=2)),
             row=1, col=1
         )
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['val_loss'],
+            go.Scatter(x=df['epoch'], y=df['val_loss'],
                       name='Val Loss', line=dict(color='#ff0000', width=2)),
             row=1, col=1
         )
         
-        # 2. Training & Validation Accuracy
+        # 2. Trading Performance (Win Rate and Returns)
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['train_accuracy'],
-                      name='Train Accuracy', line=dict(color='#00ff00', width=2)),
+            go.Scatter(x=df['epoch'], y=df['val_win_rate'],
+                      name='Val Win Rate', line=dict(color='#00ffff', width=2)),
             row=1, col=2
         )
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['val_accuracy'],
-                      name='Val Accuracy', line=dict(color='#ff0000', width=2)),
+            go.Scatter(x=df['epoch'], y=df['val_avg_return'],
+                      name='Val Avg Return', line=dict(color='#ffff00', width=2)),
             row=1, col=2
         )
         
-        # 3. Learning Rate
+        # 3. Accuracy & Win Rate
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['learning_rate'],
-                      name='Learning Rate', line=dict(color='#00ffff', width=2)),
+            go.Scatter(x=df['epoch'], y=df['train_accuracy'],
+                      name='Train Accuracy', line=dict(color='#00ff00', width=2)),
+            row=2, col=1
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['val_accuracy'],
+                      name='Val Accuracy', line=dict(color='#ff0000', width=2)),
+            row=2, col=1
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['train_win_rate'],
+                      name='Train Win Rate', line=dict(color='#00ff00', width=2, dash='dash')),
+            row=2, col=1
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['val_win_rate'],
+                      name='Val Win Rate', line=dict(color='#ff0000', width=2, dash='dash')),
             row=2, col=1
         )
         
-        # 4. Gradient Norm
+        # 4. Average Returns
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['gradient_norm'],
-                      name='Gradient Norm', line=dict(color='#ffff00', width=2)),
+            go.Scatter(x=df['epoch'], y=df['train_avg_return'],
+                      name='Train Avg Return', line=dict(color='#00ff00', width=2)),
+            row=2, col=2
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['val_avg_return'],
+                      name='Val Avg Return', line=dict(color='#ff0000', width=2)),
             row=2, col=2
         )
         
-        # 5. Memory Usage
+        # 5. Learning Rate & Gradient
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['memory_used'],
-                      name='Memory (GB)', line=dict(color='#ff00ff', width=2)),
+            go.Scatter(x=df['epoch'], y=df['learning_rate'],
+                      name='Learning Rate', line=dict(color='#00ffff', width=2)),
+            row=3, col=1
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['gradient_norm'],
+                      name='Gradient Norm', line=dict(color='#ffff00', width=2)),
             row=3, col=1
         )
         
-        # 6. Training Speed
+        # 6. System Metrics
         self.fig.add_trace(
-            go.Scatter(x=best_worker_df['epoch'], y=best_worker_df['samples_per_sec'],
+            go.Scatter(x=df['epoch'], y=df['memory_used'],
+                      name='Memory (GB)', line=dict(color='#ff00ff', width=2)),
+            row=3, col=2
+        )
+        self.fig.add_trace(
+            go.Scatter(x=df['epoch'], y=df['samples_per_sec'],
                       name='Samples/sec', line=dict(color='#ffffff', width=2)),
             row=3, col=2
         )
@@ -200,11 +222,11 @@ class TrainingMonitor:
         self.fig.update_xaxes(title_text="Epoch", row=3, col=2)
         
         self.fig.update_yaxes(title_text="Loss", row=1, col=1)
-        self.fig.update_yaxes(title_text="Accuracy", row=1, col=2, range=[0, 1])
-        self.fig.update_yaxes(title_text="Learning Rate", row=2, col=1)
-        self.fig.update_yaxes(title_text="Gradient Norm", row=2, col=2)
-        self.fig.update_yaxes(title_text="Memory (GB)", row=3, col=1)
-        self.fig.update_yaxes(title_text="Samples/sec", row=3, col=2)
+        self.fig.update_yaxes(title_text="Performance (%)", row=1, col=2)
+        self.fig.update_yaxes(title_text="Accuracy & Win Rate (%)", row=2, col=1)
+        self.fig.update_yaxes(title_text="Average Return (%)", row=2, col=2)
+        self.fig.update_yaxes(title_text="Learning Rate & Gradient", row=3, col=1)
+        self.fig.update_yaxes(title_text="System Metrics", row=3, col=2)
         
         # Update layout
         self.fig.update_layout(
@@ -213,7 +235,7 @@ class TrainingMonitor:
             showlegend=True,
             template='plotly_dark',
             title={
-                'text': f'Training Progress (Best Worker {best_worker_id})',
+                'text': 'Trading Model Training Progress',
                 'y':0.98,
                 'x':0.5,
                 'xanchor': 'center',
